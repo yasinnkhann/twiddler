@@ -13,10 +13,22 @@ var INDEX_PATH = Cypress.env('INDEX_PATH') || './index.html';
 var APP_FILENAME = 'app.js';
 var CSS_PATH = '/styles.css';
 
+// Store global references to flatten Cypress call chains
+var _window, _document;
+
+// Store number of tweets that existed last time a tweet was rendered
+// This avoids any mismatch when tweets are added to the dataset while other
+// tests are still executing, as it gets updated exactly at render-time
+var numberOfTweetsAtLastRender = 0;
+
+// Store check of initial body contents (before JS modifies elements)
+// in order to test for hardcoded HTML elements
+var htmlHasHardcodedContents = false;
+
 /**
  * Helpers
  */
-function getCSSRules(_document, ruleFilter) {
+function getCSSRules(ruleFilter) {
   var styleSheet = Array.from(_document.styleSheets)
     .filter(function(s) { return s.href && s.href.endsWith(CSS_PATH); })
     .pop();
@@ -24,26 +36,27 @@ function getCSSRules(_document, ruleFilter) {
     .filter(ruleFilter);
 }
 
-function forceGenerateNewTweet() {
-  cy.window().then(function(_window) {
-    _window.generateRandomTweet();
-  });
-}
-
 function getNewestRenderedTweetIndex() {
-  return new Promise(function(resolve) {
-    var firstTweetText;
-    cy.get('.tweet').first().invoke('text').then(function(text) {
-      firstTweetText = text;
-    });
-    cy.window().then(function(_window) {
+  return new Promise(function(resolve, reject) {
+    cy.get('.tweet').first().then(function($tweet) {
+      var text = $tweet.text();
       for (var i = _window.streams.home.length - 1; i >= 0; i--) {
-        if (firstTweetText.includes(_window.streams.home[i].message)) {
+        if (text.includes(_window.streams.home[i].message)) {
           return resolve(i);
         }
       }
+      reject(
+        'The message appearing in the first .tweet element on the page ' +
+        'was not found in any of the tweet data in streams.home.\n'
+      );
     });
   });
+}
+
+function formatOrdinal(num) {
+  if (num === 1) return '1st';
+  if (num === 2) return '2nd';
+  return num + 'th';
 }
 
 /**
@@ -65,24 +78,27 @@ var sharedTests = {
 
   tweetsRenderInReverseChronologicalOrder: function() {
     it('displays Tweets in reverse chronological order (newest first)', function() {
-      getNewestRenderedTweetIndex().then(function(firstTweetIndex) {
-        cy.window().then(function(_window) {
-          cy.get('.tweet').each(function($tweet, index) {
-            var expectedTweet = _window.streams.home[firstTweetIndex - index];
-            expect($tweet).to.contain(expectedTweet.message);
-          });
+        cy.get('.tweet').each(function($tweet, index) {
+        cy.wrap(getNewestRenderedTweetIndex()).then(function(firstTweetIndex) {
+          var expectedTweet = _window.streams.home[firstTweetIndex - index];
+          var errorMessage = [
+            `The first .tweet found on the page was found at streams.home[${firstTweetIndex}],`,
+            `so the ${formatOrdinal(index + 1)} .tweet is expected to match streams.home[${firstTweetIndex - index}]`
+          ].join('\n');
+          expect(expectedTweet, errorMessage).not.to.be.undefined;
+          expect($tweet).to.contain(expectedTweet.message);
         });
       });
     });
   },
 
-  pageDoesNotRefresh: function(callback) {
+  pageDoesNotRefreshAfter: function(callback) {
     it('does not refresh the browser window', function() {
-      cy.window().then(function(w) { w.__page_not_reloaded = true; });
-      cy.window().should('have.prop', '__page_not_reloaded', true);
+      cy.intercept('index.html*', function() {
+        expect(false, 'A page reload has been detected').to.eq(true);
+      });
       callback();
-      cy.window().should('have.prop', '__page_not_reloaded', true);
-      cy.window().then(function(w) { delete w.__page_not_reloaded; });
+      cy.wait(100);
     });
   },
 };
@@ -98,8 +114,41 @@ afterEach(function() {
 });
 
 // Load the page once before the suite begins
+function countElementsWithClass(node, className) {
+  return Array.prototype.reduce.call(node.childNodes, function(sum, child) {
+    return countElementsWithClass(child, className) + sum;
+  }, node.classList && node.classList.contains(className) ? 1 : 0);
+}
 before(function() {
-  cy.visit(INDEX_PATH);
+  cy.visit(INDEX_PATH, {
+    onBeforeLoad: function(contentWindow) {
+      // Store persistent references, since this is the only cy.visit call
+      _window = contentWindow;
+      _document = contentWindow.document;
+      // Update numberOfTweetsAtLastRender when tweets are added to the page
+      var tweetCountObserver = new MutationObserver(function(mutations) {
+        if (mutations.some(function(mutation) {
+          return Array.from(mutation.addedNodes).some(function(node) {
+            return countElementsWithClass(node, 'tweet') > 0;
+          });
+        })) {
+          numberOfTweetsAtLastRender = _window.streams.home.length;
+        }
+      });
+      tweetCountObserver.observe(contentWindow.document, { childList: true, subtree: true });
+
+      var isBodyInitialized;
+      var initialHtmlObserver = new MutationObserver(function(mutations) {
+        if (contentWindow.document.body && !isBodyInitialized) {
+          htmlHasHardcodedContents = Array.from(_document.body.children).some(function(elem) {
+            return elem.id !== 'app' && elem.nodeName !== 'SCRIPT';
+          });
+          isBodyInitialized = true;
+        }
+      });
+      initialHtmlObserver.observe(contentWindow.document, { childList: true, subtree: true });
+    }
+  });
 });
 
 /**
@@ -122,6 +171,15 @@ describe('Project', function() {
       expect(scriptContent).to.be.empty;
     });
   });
+
+  it('does not contain any hardcoded HTML elements', function() {
+    const message = [
+      'The only HTML elements that should be hardcoded (coded into your .html file)',
+      'are a div with an ID of app, and a script tag to load app.js.',
+      'All other elements should be created from JavaScript within your app.js.\n'
+    ].join('\n');
+    expect(htmlHasHardcodedContents, message).not.to.be.true;
+  });
 });
 
 describe('Home Feed', function() {
@@ -130,9 +188,7 @@ describe('Home Feed', function() {
   });
 
   it('contains one element with a class of "tweet" for every Tweet', function() {
-    cy.window().then(function(_window) {
-      cy.get('#feed .tweet').should('have.length', _window.streams.home.length);
-    });
+    cy.get('#feed .tweet').should('have.length', numberOfTweetsAtLastRender);
   });
 
   sharedTests.tweetsRenderInReverseChronologicalOrder();
@@ -149,13 +205,13 @@ describe('Home Feed', function() {
     });
 
     context('when clicked', function() {
-      sharedTests.pageDoesNotRefresh(function() {
+      sharedTests.pageDoesNotRefreshAfter(function() {
         cy.get('#update-feed').click();
       });
 
       it('makes the Feed grow larger', function() {
         var initialNumTweets = Cypress.$('.tweet').length;
-        forceGenerateNewTweet();
+        _window.generateRandomTweet();
         cy.get('#update-feed').click().then(function() {
           expect(Cypress.$('.tweet').length).to.be.greaterThan(initialNumTweets);
         });
@@ -165,18 +221,16 @@ describe('Home Feed', function() {
       sharedTests.tweetsRenderInReverseChronologicalOrder();
 
       it('does not affect any other elements on the page except #feed', function() {
-        cy.document().then(function(_document) {
-          function getFeedSiblings() {
-            return Array.from(_document.getElementById('feed').parentElement.children)
-              .filter(function(elem) {
-                return elem.id !== 'feed';
-              });
-          }
-          var before = getFeedSiblings();
-          cy.get('#update-feed').click().then(function() {
-            var after = getFeedSiblings();
-            expect(before).to.deep.eq(after);
-          });
+        function getFeedSiblings() {
+          return Array.from(_document.getElementById('feed').parentElement.children)
+            .filter(function(elem) {
+              return elem.id !== 'feed';
+            });
+        }
+        var before = getFeedSiblings();
+        cy.get('#update-feed').click().then(function() {
+          var after = getFeedSiblings();
+          expect(before).to.deep.eq(after);
         });
       });
     });
@@ -191,18 +245,20 @@ describe('Tweet UI Component', function() {
     });
   });
 
+  // Run assertions by associating each tweet element with its data
+  // This should be safe since we've already passed the tests asserting order
+  // If no callback is provided, assert existence of the selector,
+  // otherwise, the callback is invoked with the element and the associated data
   function assertEveryTweet(testName, selector, callback) {
     it(testName, function() {
-      cy.window().then(function(_window) {
-        cy.get(selector).each(function($elem, index) {
-          var expectedTweet = _window.streams.home[newestTweetIndex - index];
-          expect(expectedTweet).not.to.be.undefined;
-          if (callback) {
-            callback($elem, expectedTweet, _window);
-          } else {
-            expect($elem).to.exist;
-          }
-        });
+      cy.get(selector).each(function($elem, index) {
+        var expectedTweet = _window.streams.home[newestTweetIndex - index];
+        expect(expectedTweet).not.to.be.undefined;
+        if (callback) {
+          callback($elem, expectedTweet, _window);
+        } else {
+          expect($elem).to.exist;
+        }
       });
     });
   }
@@ -256,23 +312,19 @@ describe('Tweet UI Component', function() {
   );
 
   it('uses the time from the Tweet data, not the current time', function() {
-    cy.window().then(function(_window) {
-      var dateSpy = cy.spy(_window, 'Date');
-      var dateNowSpy = cy.spy(Date, 'now');
-      var generateRandomTweetSpy = cy.spy(_window, 'generateRandomTweet');
-      // timeago itself uses new Date
-      var timeagoSpies = [];
-      if (_window.jQuery.timeago) {
-        timeagoSpies.push(cy.spy(_window.jQuery, 'timeago'));
-        timeagoSpies.push(cy.spy(_window.jQuery.prototype, 'timeago'));
-      }
-      cy.get('#update-feed').click().then(function() {
-        var timeagoCalls = timeagoSpies.reduce(function(acc, cur) {
-          return acc + cur.callCount;
-        }, 0);
-        expect(dateSpy.callCount).to.eq(timeagoCalls + generateRandomTweetSpy.callCount);
-        expect(dateNowSpy).not.to.be.called;
-      });
+    var propertyAccessCount = 0;
+    var propertySpy = {
+      get: function(target, prop) {
+        if (prop === 'created_at') propertyAccessCount++;
+        return target[prop];
+      },
+    };
+    _window.streams.home.forEach(function(tweet, index) {
+      _window.streams.home[index] = new Proxy(tweet, propertySpy);
+    });
+
+    cy.get('#update-feed').click().then(function() {
+      expect(propertyAccessCount).to.be.at.least(numberOfTweetsAtLastRender);
     });
   });
 
@@ -280,16 +332,14 @@ describe('Tweet UI Component', function() {
     var iconClasses = ['comment', 'retweet', 'like', 'share'];
     iconClasses.forEach(function(iconClass) {
       it('contains a ' + iconClass + ' icon with a class of "' + iconClass + '"', function() {
-        cy.window().then(function(_window) {
-          var hasFontAwesome = _window.FontAwesome || _window.FontAwesomeKitConfig;
-          if (hasFontAwesome) {
-            cy.log('Since FontAwesome is present, this icon should be an I tag with a FontAwesome class applied.');
-            cy.get('.tweet i.' + iconClass + '[class*="fa-"]').should('exist');
-          } else {
-            cy.log('This should be an IMG tag using assets/icons/placeholder.png')
-            cy.get('.tweet img.' + iconClass + '[src$="assets/icons/placeholder.png"]').should('exist');
-          }
-        });
+        var hasFontAwesome = _window.FontAwesome || _window.FontAwesomeKitConfig;
+        if (hasFontAwesome) {
+          cy.log('Since FontAwesome is present, this icon should be an I tag with a FontAwesome class applied.');
+          cy.get('.tweet i.' + iconClass + '[class*="fa-"]').should('exist');
+        } else {
+          cy.log('This should be an IMG tag using assets/icons/placeholder.png')
+          cy.get('.tweet img.' + iconClass + '[src$="assets/icons/placeholder.png"]').should('exist');
+        }
       });
     });
   });
@@ -298,31 +348,27 @@ describe('Tweet UI Component', function() {
 describe('Libraries', function() {
   describe('timeago', function() {
     it('is included as a library in the project', function() {
-      cy.window().then(function(_window) {
-        var message = [
-          'timeago is a jQuery plugin that can be used to format timestamps.',
-          'Visit its website for instructions on downloading and using it:',
-          '  https://timeago.yarp.com/',
-          'Remember to `git add` this new file to your next git commit!',
-          '',
-        ].join('\n');
-        expect(_window.jQuery.timeago, message).to.not.be.undefined;
-      });
+      var message = [
+        'timeago is a jQuery plugin that can be used to format timestamps.',
+        'Visit its website for instructions on downloading and using it:',
+        '  https://timeago.yarp.com/',
+        'Remember to `git add` this new file to your next git commit!',
+        '',
+      ].join('\n');
+      expect(_window.jQuery.timeago, message).to.not.be.undefined;
     });
 
     it('is used at least once', function() {
-      cy.window().then(function(_window) {
-        cy.spy(_window.jQuery, 'timeago');
-        cy.spy(_window.jQuery.prototype, 'timeago');
-        forceGenerateNewTweet();
-        cy.get('#update-feed').click().then(function() {
-          expect(
-            Math.max(
-              _window.jQuery.timeago.callCount,
-              _window.jQuery.prototype.timeago.callCount
-            )
-          ).not.to.eq(0);
-        });
+      cy.spy(_window.jQuery, 'timeago');
+      cy.spy(_window.jQuery.prototype, 'timeago');
+      _window.generateRandomTweet();
+      cy.get('#update-feed').click().then(function() {
+        expect(
+          Math.max(
+            _window.jQuery.timeago.callCount,
+            _window.jQuery.prototype.timeago.callCount
+          )
+        ).not.to.eq(0);
       });
     });
   });
@@ -338,9 +384,7 @@ describe('Libraries', function() {
         'The "How to Use" page on the FontAwesome website can provide more information.',
         '',
       ].join('\n');
-      cy.window().then(function(_window) {
-        expect(_window.FontAwesome || _window.FontAwesomeKitConfig, message).to.not.be.undefined;
-      });
+      expect(_window.FontAwesome || _window.FontAwesomeKitConfig, message).to.not.be.undefined;
     });
 
     it('is used', function() {
@@ -351,15 +395,13 @@ describe('Libraries', function() {
   describe('Google Fonts', function() {
     it('is included', function() {
       // check for CSS @import first
-      cy.document().then(function(_document) {
-        var hasGoogleFontsImport = getCSSRules(_document, function(rule) {
-          return rule.href && rule.href.includes('fonts.googleapis.com');
-        }).length > 0;
-        if (!hasGoogleFontsImport) {
-          // if no import rule found, assert on link tag at least
-          cy.get('link[href*="fonts.googleapis.com"]').should('exist');
-        }
-      });
+      var hasGoogleFontsImport = getCSSRules(function(rule) {
+        return rule.href && rule.href.includes('fonts.googleapis.com');
+      }).length > 0;
+      if (!hasGoogleFontsImport) {
+        // if no import rule found, assert on link tag at least
+        cy.get('link[href*="fonts.googleapis.com"]').should('exist');
+      }
     });
   });
 });
@@ -367,7 +409,11 @@ describe('Libraries', function() {
 describe('User Feed', function() {
   context('clicking on a username in a Tweet', function() {
     var selectedUsername;
+    var originalButtonText;
     before(function() {
+      cy.get('#update-feed').then(function($button) {
+        originalButtonText = $button.text();
+      });
       cy.get('.tweet .username').first().then(function($username) {
         selectedUsername = $username.text();
         $username.click();
@@ -385,14 +431,16 @@ describe('User Feed', function() {
     });
 
     describe('"Back" button', function() {
-      it('switches from the User Feed back to the Home Feed', {
-        retries: 3
-      }, function() {
-        cy.window().then(function(_window) {
-          cy.get('#update-feed').click().then(function() {
-            expect(Cypress.$('.tweet').length).to.eq(_window.streams.home.length);
-          });
-        });
+      before(function() {
+        cy.get('#update-feed').click();
+      });
+
+      it('switches from the User Feed back to the Home Feed', function() {
+        expect(Cypress.$('.tweet').length).to.eq(numberOfTweetsAtLastRender);
+      });
+
+      it('switches its text from "Back" to its original value', function() {
+        cy.get('#update-feed').contains(originalButtonText);
       });
 
       sharedTests.noDuplicateTweetsRendered();
@@ -400,7 +448,7 @@ describe('User Feed', function() {
   });
 });
 
-describe('CSS Styling and Layout', function() {
+describe('Styling and Layout', function() {
   describe('Properties', function() {
     var requiredProperties = [
       'background-color',
@@ -417,21 +465,53 @@ describe('CSS Styling and Layout', function() {
     ];
     requiredProperties.forEach(function(propertyName) {
       it('uses the "' + propertyName + '" CSS property with a valid value', function() {
-        cy.document().then(function(_document) {
-          expect(getCSSRules(_document, function(rule) {
-            return rule.style && rule.style.getPropertyValue(propertyName);
-          })).not.to.be.empty;
-        });
+        expect(getCSSRules(function(rule) {
+          return rule.style && rule.style.getPropertyValue(propertyName);
+        })).not.to.be.empty;
       })
     });
 
     it('uses one or more border CSS properties (besides border-radius)', function() {
-      cy.document().then(function(_document) {
-        expect(getCSSRules(_document, function(rule) {
-          return rule.style && Array.from(rule.style).some(function(ruleName) {
-            return ruleName === 'border' || (ruleName !== 'border-radius' && ruleName.startsWith('border-'));
-          });
-        })).not.to.be.empty;
+      expect(getCSSRules(function(rule) {
+        return rule.style && Array.from(rule.style).some(function(ruleName) {
+          return ruleName === 'border' || (ruleName !== 'border-radius' && ruleName.startsWith('border-'));
+        });
+      })).not.to.be.empty;
+    });
+  });
+
+  it('includes a hover effect for icons', function() {
+    cy.get('.comment').eq(1).then(function($comment) {
+      var elem = $comment.get(0);
+      // check for CSS :hover rule
+      var matchingRules = getCSSRules(function(rule) {
+        var selectors = rule.selectorText.split(',');
+        return rule.cssText && selectors.some(function(selector) {
+          return selector.trim().endsWith(':hover') &&
+            elem.matches(selector.trim().replace(/:hover$/, ''));
+        });
+      });
+      if (matchingRules.length > 0) {
+        expect(true, 'A CSS :hover rule is included').to.eq(true);
+        return;
+      }
+
+      // check for JS hover handler instead if CSS rule isn't present
+      var styles = getComputedStyle(elem);
+      var stylesBefore = {};
+      var stylesAfter = {};
+      Object.assign(stylesBefore, styles);
+
+      cy.get('.comment').eq(1).trigger('mouseover').then(function() {
+        var mouseOverMessage = 'The CSS of an icon should change on hover';
+        Object.assign(stylesAfter, styles);
+        cy.wrap(stylesBefore).should('not.deep.equal', stylesAfter, mouseOverMessage);
+
+        cy.get('.comment').eq(1).trigger('mouseout').then(function() {
+          var mouseOutMessage = 'The CSS of an icon should change back to its initial value after hover';
+          Object.assign(stylesAfter, styles);
+          cy.wrap(stylesBefore).should('deep.equal', stylesAfter, mouseOutMessage);
+        });
       });
     });
   });
@@ -439,55 +519,49 @@ describe('CSS Styling and Layout', function() {
   if (!Cypress.env('SKIP_FLAVOR_TEST')) {
     describe('Finishing up', function() {
       it('the page is as beautiful as you want it to be', function() {
-        cy.window().then(function(_window) {
-          var message = [
-            'Nice work, you\'ve completed the Bare Minimum Requirements!',
-            'Once you\'re satisfied with how your page looks, set',
-            '',
-            '    window.isItBeautifulYet = true',
-            '',
-            'at the end of your application code.',
-            '',
-            'If you would like to continue on to the extra credit,',
-            '  open this test file (spec/twiddler.js)',
-            '  and change the "xdescribe" to "describe" in the block',
-            '  labelled as "Extra credit" near the end of the file.',
-            '',
-            '',
-          ].join('\n');
-          expect(_window.isItBeautifulYet, message).to.eq(true);
-        });
+        var message = [
+          'Nice work, you\'ve completed the Bare Minimum Requirements!',
+          'Once you\'re satisfied with how your page looks, set',
+          '',
+          '    window.isItBeautifulYet = true',
+          '',
+          'at the end of your application code.',
+          '',
+          'If you would like to continue on to the extra credit,',
+          '  open this test file (' + __filename + ')',
+          '  and change the "xdescribe" to "describe" in the block',
+          '  labelled as "Extra credit" near the end of the file.',
+          '',
+          '',
+        ].join('\n');
+        expect(_window.isItBeautifulYet, message).to.eq(true);
       });
     });
   }
 });
 
 if (!Cypress.env('SKIP_EXTRA_CREDIT')) {
-  xdescribe('Extra credit', function() {
+  describe('Extra credit', function() {
     describe('Friends list', function() {
       it('exists as a UL tag with an ID of "friends-list"', function() {
         cy.get('ul#friends-list').should('exist');
       });
 
       it('has an LI element with a class of "friend" for each user', function() {
-        cy.window().then(function(_window) {
-          var numUsers = Object.keys(_window.streams.users).length;
-          cy.get('#friends-list li.friend').should('have.length', numUsers);
-        });
+        var numUsers = Object.keys(_window.streams.users).length;
+        cy.get('#friends-list li.friend').should('have.length', numUsers);
       });
 
       context('when a user is clicked', function() {
         var selectedUsername;
         before(function() {
-          cy.window().then(function(_window) {
-            for (var user in _window.streams.users) {
-              if (_window.streams.users[user].length > 0) {
-                selectedUsername = '@' + user;
-                break;
-              }
+          for (var user in _window.streams.users) {
+            if (_window.streams.users[user].length > 0) {
+              selectedUsername = '@' + user;
+              break;
             }
-            cy.get('#friends-list li.friend').contains(selectedUsername).click();
-          });
+          }
+          cy.get('#friends-list li.friend').contains(selectedUsername).click();
         });
 
         after(function() {
@@ -525,17 +599,20 @@ if (!Cypress.env('SKIP_EXTRA_CREDIT')) {
       it('has a button to submit the form', function() {
         var submitButton;
         cy.get('#new-tweet-form').then(function($form) {
-          submitButton = $form.find('button') || $form.find('input[type="submit"]');
-          expect(submitButton).to.not.be.undefined;
+          submitButton = $form.find('button');
+          if (!submitButton.length) submitButton = $form.find('input[type="submit"]');
+          expect(submitButton.length).to.not.be(0);
         });
       });
 
-      sharedTests.pageDoesNotRefresh(function() {
+      sharedTests.pageDoesNotRefreshAfter(function() {
         cy.get('#new-tweet-form input[name="username"]').invoke('val', 'foo');
         cy.get('#new-tweet-form input[name="message"]').invoke('val', 'bar');
         var submitButton;
         cy.get('#new-tweet-form').then(function($form) {
-          submitButton = $form.find('button') || $form.find('input[type="submit"]');
+          submitButton = $form.find('button');
+          if (!submitButton.length) submitButton = $form.find('input[type="submit"]');
+          expect(submitButton.length).to.not.be(0);
           submitButton.click();
         });
 
@@ -553,26 +630,24 @@ if (!Cypress.env('SKIP_EXTRA_CREDIT')) {
             cy.get('#new-tweet-form input[name="message"]').invoke('val', testMessage);
             var submitButton;
             cy.get('#new-tweet-form').then(function($form) {
-              submitButton = $form.find('button') || $form.find('input[type="submit"]');
+              submitButton = $form.find('button');
+              if (!submitButton.length) submitButton = $form.find('input[type="submit"]');
+              expect(submitButton.length).to.not.be(0);
               submitButton.click();
             });
           });
         });
 
         it('adds the tweet data to the user\'s stream array', function() {
-          cy.window().then(function(_window) {
-            expect(_window.streams.users[testUsername]).to.not.be.undefined;
-            expect(_window.streams.users[testUsername]).to.have.lengthOf(testMessages.length);
-          });
+          expect(_window.streams.users[testUsername]).to.not.be.undefined;
+          expect(_window.streams.users[testUsername]).to.have.lengthOf(testMessages.length);
         });
 
         it('adds the tweet data to the home stream array', function() {
-          cy.window().then(function(_window) {
-            testMessages.forEach(function(testMessage) {
-              expect(_window.streams.home.some(function(tweet) {
-                return tweet.user === testUsername && tweet.message === testMessage;
-              })).to.be.true;
-            });
+          testMessages.forEach(function(testMessage) {
+            expect(_window.streams.home.some(function(tweet) {
+              return tweet.user === testUsername && tweet.message === testMessage;
+            })).to.be.true;
           });
         });
 

@@ -11,7 +11,7 @@ fi
 
 # install cypress globally if not installed
 if ! command -v cypress &>/dev/null; then
-  npm install cypress --global
+  npm install cypress@8.4.0 --global
 fi
 
 cypress open --project . --config-file "spec/config.json"

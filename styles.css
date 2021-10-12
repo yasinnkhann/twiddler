@@ -1,110 +1,259 @@
 /* These CSS rules apply to the <html>, <body>, and <div id="app"> HTML elements in index.html */
-html, body {
-  height: 100%;
-  width: 100%;
+html, body, #app {
+  min-height: 100vh;
   margin: 0;
 }
 
 /* Continue building out the CSS styling for your Twiddler app below! We got you started by
 providing a space for you to apply styles to your app's outermost HTML element - the #app itself. */
 
+* {
+  margin: 0;
+  padding: 0;
+}
+
 #app {
-  background: rgb(105, 46, 173);
-  color: blue;
-  font-family: 'Baloo Tammudu 2', sans-serif;
-  height: auto;
+  background-color: royalblue;
+  color: gold;
+}
+
+#title {
+  width: 500px;
+  margin: auto;
+  padding: 15px;
+  font-family: 'Josefin Sans', sans-serif;
+  font-size: 300%;
+  text-align: center;
+  font-weight: bold;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+}
+
+#title:hover {
+  color: aqua;
+}
+
+#update-feed {
+  display: flex;
+  justify-content: center;
+  background-color:cornflowerblue;
+  width: 100px;
+  margin: auto;
+  border:cornflowerblue;
+  border-radius: 20px;
+  font-size: large;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  padding: 10px;
+  cursor: pointer;
+}
+
+#update-feed:hover {
+  font-weight: bold;
 }
 
 #feed {
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-
-h1 {
-  text-align: center;
-  font-size: 70px;
-  margin-top: 0;
-  text-shadow: 5px 5px black;
-}
-
-#update-feed {
-  color: silver;
-  font-style: italic;
-  position: relative;
-  left: 460px;
-  border-radius: 10px;
-  font-size: 15px;
-  background-color: rgb(43, 9, 105);
-  height: 50px;
-  width: 170px;
-  margin-bottom: 30px;
-  box-shadow: 0 10px 10px 0 black, 0 0 20px 0 black;
-
-}
-
-.friends-list {
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
   font-weight: bolder;
-  position: sticky;
-  top: 330px;
-  left: 20px;
-  float: left;
-  align-items: center;
-  border: 5px solid rgb(91, 3, 192);
-  width: 155px;
-  padding: 10px;
-  background-color: black;
-  text-align: center;
-  box-shadow: 0 10px 10px 0 black, 0 0 20px 0 black;
+  margin-left: 2em;
 }
 
 .tweet {
-  background-color: black;
-  border: 3px solid rgb(91, 3, 192);
-  height: 235px;
-  width: 550px;
-  margin-bottom: 20px;
-  padding: 20px;
-  box-shadow: 0 10px 10px 0 black, 0 20px 30px 0 black;
-}
-
-.message {
-  font-size: 18px;
-  text-align: center;
+  position:relative;
+  width: 500px;
+  margin: 20px auto;
+  padding: 100px;
+  background-color: firebrick;
+  border-radius: 20px;
 }
 
 .username {
+  position: absolute;
+  top: 15%;
+  left: 15%;
   font-size: 20px;
-  margin-left: 160px;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  display: block;
+  width: 90px;
+  margin: auto;
+  cursor: pointer;
+}
+
+.username:hover {
+  color: greenyellow;
+  font-weight: bold;
+}
+
+.icon {
+  font-size: 30px;
+  margin-top: 15px;
+  margin-left: 5px;
+  margin-right: 5px;
+  cursor: pointer;
+}
+
+.comment {
+  position: absolute;
+  bottom: 10%;
+  left: 15%;
+}
+
+.retweet {
+  position: absolute;
+  bottom: 10%;
+  left: 35%;
+}
+
+.like {
+  position: absolute;
+  bottom: 10%;
+  left: 60%;
+}
+
+.share {
+  position: absolute;
+  bottom: 10%;
+  left: 78%;
 }
 
 .profile-photo {
-  height: 55px;
-  border: 3px solid rgb(61, 0, 230);
-}
-
-.icons {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-self: flex-end;
-  padding-top: 10px;
+  top: 0%;
+  right: 88%;
+  position:absolute;
+  border: 3px solid blue;
+  border-radius: 50%;
+  margin: 10px auto;
+  width: 10%;
+  height: 35%;
 }
 
 .timestamp {
-  text-align: end;
-  padding-right: 5px;
-  padding-top: 10px;
+   position: absolute;
+   top: 10%;
+   right: 5%;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  font-style: italic;
 }
 
+.timestamp:hover {
+  color: greenyellow;
+  font-weight: bold;
+}
 
-i {
-  font-size: 25px;
+.message {
+  position: absolute;
+  justify-content: center;
+  bottom: 45%;
+  left: 30%;
+  font-size: 18px;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  text-align: center;
+}
+
+.message:hover {
+  color: greenyellow;
+  font-weight: bold;
+}
+
+#friendsListContainer {
+  border: 5px solid;
+  border-image: linear-gradient(45deg, turquoise, greenyellow) 1;
+  position: sticky;
+  width: 20%;
+  margin-left: 1em;
+  height: fit-content;
+  top: 27%;
+}
+
+ul {
+  color: gold;
+  font-size: 40px;
+  list-style-type: none;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  padding: 10px;
 }
 
 li {
-  list-style-type: none;
+  color: sandybrown;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  font-size: 30px;
 }
 
+li:hover {
+  color: fuchsia;
+}
 
+.friend {
+  cursor: pointer;
+}
 
+#new-tweet-form {
+  display: flex;
+  justify-content: center;
+  border: 5px solid;
+  border-image: linear-gradient(45deg, rgb(224, 123, 64), rgb(165, 13, 165)) 1;
+  height: 25vh;
+  width: 46%;
+  padding: 2em;
+  margin-bottom: 2em;
+  position: relative;
+  left: 26%;
+}
+
+#newTweetTitle {
+position: absolute;
+left: 36.5%;
+top: 2%;
+color: rgb(72, 255, 0);
+font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+}
+
+#newTweetTitle:hover {
+  color:rgb(255, 136, 0);
+}
+
+#username {
+  height: 2vh;
+  position: absolute;
+  top: 30%;
+}
+
+#usernameLabel {
+  position: absolute;
+  top: 28%;
+  left: 28%;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+}
+
+#message {
+  height: 10vh;
+  position: absolute;
+  bottom: 25%;
+  left: 35%;
+}
+
+#messageLabel {
+  position: absolute;
+  left: 28%;
+  top: 53%;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+}
+
+#submitButton {
+  position: absolute;
+  bottom: 5%;
+  left: 44%;
+  background-color:cornflowerblue;
+  color: black;
+  border:cornflowerblue;
+  border-radius: 20px;
+  font-size: large;
+  font-family: 'Patrick Hand', 'Courier New', Courier, monospace;
+  padding: 3px;
+  cursor: pointer;
+}
+
+#motherBlock {
+  display: flex;
+}
